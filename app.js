@@ -1,0 +1,1 @@
+const form=document.querySelector("#grab"),input=document.querySelector("#url"),status=document.querySelector("#status");form.addEventListener("submit",e=>{e.preventDefault();let u;try{u=new URL(input.value)}catch{status.textContent="Pega un enlace válido para continuar.";return}status.textContent="✓ Enlace válido. El motor de análisis multimedia está en construcción.";});
