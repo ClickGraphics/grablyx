@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://clickgraphics.github.io/grablyx/sitemap.xml
