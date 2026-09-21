@@ -1,6 +1,7 @@
 const form=document.querySelector("#grab"),input=document.querySelector("#url"),status=document.querySelector("#status");
 
 const platforms=[
+  {name:"YouTube",hosts:["youtube.com","youtu.be"]},
   {name:"Facebook",hosts:["facebook.com","fb.watch"]},
   {name:"Instagram",hosts:["instagram.com"]},
   {name:"TikTok",hosts:["tiktok.com"]},
