@@ -92,8 +92,8 @@ def analyze(link: Link):
             token = base64.urlsafe_b64encode(payload + sig).decode().rstrip("=")
             formats.append({"download": "/download?token=" + token, "id": f.get("format_id"), "ext": f.get("ext"),
                             "height": f.get("height"),
-                            "audio": f.get("acodec") not in (None, "none"),
-                            "video": f.get("vcodec") not in (None, "none"),
+                            "audio": f.get("acodec") != "none" and (f.get("acodec") is not None or f.get("vcodec") == "none"),
+                            "video": f.get("vcodec") != "none" and (f.get("vcodec") is not None or f.get("acodec") == "none" or f.get("ext") in ("mp4", "webm", "mov")),
                             "url": direct})
         return {"title": info.get("title"), "thumbnail": info.get("thumbnail"),
                 "duration": info.get("duration"), "formats": formats[:80]}
