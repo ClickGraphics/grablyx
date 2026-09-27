@@ -61,7 +61,7 @@ def analyze(link: Link):
                 info = ydl.extract_info(url, download=False)
             except yt_dlp.utils.DownloadError as primary_error:
                 parsed = urlparse(url)
-                match = re.fullmatch(r"/reel/(\\d+)/?", parsed.path)
+                match = re.fullmatch(r"/reel/(\d+)/?", parsed.path)
                 if parsed.hostname in ("facebook.com", "www.facebook.com", "m.facebook.com") and match:
                     reel_id = match.group(1)
                     alternatives = (
