@@ -27,7 +27,7 @@ async function analyze(url){
     if(!response.ok)throw Error(typeof data.detail==="string"?data.detail:"No se pudo analizar el enlace.");
     result.hidden=false;result.replaceChildren();
     const title=document.createElement("h2");title.textContent=data.title||"Contenido detectado";result.append(title);
-    const formats=(data.formats||[]).filter(f=>f.url&&f.url.startsWith("https://"));
+    const formats=(data.formats||[]).filter(f=>f.download&&f.download.startsWith("/download?token="));
     const unique=new Map();
     for(const f of formats){
       const kind=f.video?(f.audio?"video-audio":"video-only"):"audio";
@@ -42,7 +42,7 @@ async function analyze(url){
     for(const [index,f] of sorted.slice(0,20).entries()){
       const quality=f.height?f.height+"p":f.video?"Video":"Audio";
       const label=(index===0&&f.video&&f.audio?"★ Recomendado · ":"")+quality+" · "+(f.ext||"archivo")+(f.video?(f.audio?" · con audio":" · sin audio"):"");
-      addAction(label,f.url);
+      addAction(label,API+f.download);
     }
     setStatus("Análisis finalizado. Los enlaces pueden caducar o estar restringidos por el origen.");
   }catch(error){setStatus("No se pudo analizar: "+error.message);}
