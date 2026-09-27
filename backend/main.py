@@ -19,9 +19,14 @@ def validate(raw: str):
     parsed = urlparse(raw)
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
         raise HTTPException(400, "Se requiere una URL HTTPS pública.")
-    host = parsed.hostname.lower()\n    supported = ("youtube.com", "youtu.be", "facebook.com", "fb.watch", "instagram.com", "tiktok.com", "x.com", "twitter.com", "pinterest.com", "pin.it", "reddit.com", "redd.it")\n    if not any(host == domain or host.endswith("." + domain) for domain in supported):\n        raise HTTPException(400, "Plataforma no admitida por el servidor.")
-    if host in {"localhost", "metadata.google.internal"} or host.endswith((".local", ".internal")):
-        raise HTTPException(400, "Destino no permitido.")
+    host = parsed.hostname.lower()
+    supported = (
+        "youtube.com", "youtu.be", "facebook.com", "fb.watch",
+        "instagram.com", "tiktok.com", "x.com", "twitter.com",
+        "pinterest.com", "pin.it", "reddit.com", "redd.it"
+    )
+    if not any(host == domain or host.endswith("." + domain) for domain in supported):
+        raise HTTPException(400, "Plataforma no admitida por el servidor.")
     try:
         addresses = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
         if any(not ipaddress.ip_address(item[4][0]).is_global for item in addresses):
