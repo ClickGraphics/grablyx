@@ -30,7 +30,7 @@ async function analyze(url){
     const formats=(data.formats||[]).filter(f=>f.download&&f.download.startsWith("/download?token="));
     const unique=new Map();
     for(const f of formats){
-      const kind=f.video?(f.audio?"video-audio":"video-only"):"audio";
+      const kind=f.video?(f.audio?"video-audio":f.unknown_audio?"video-unknown":"video-only"):"audio";
       const key=[kind,f.ext||"",f.height||0].join(":");
       if(!unique.has(key))unique.set(key,f);
     }
@@ -41,7 +41,8 @@ async function analyze(url){
     if(!sorted.length){const p=document.createElement("p");p.textContent="No hay formatos de descarga compatibles disponibles.";result.append(p);}
     for(const [index,f] of sorted.slice(0,20).entries()){
       const quality=f.height?f.height+"p":f.video?"Video":"Audio";
-      const label=(index===0&&f.video&&f.audio?"★ Recomendado · ":"")+quality+" · "+(f.ext||"archivo")+(f.video?(f.audio?" · con audio":" · sin audio"):"");
+      const sound=f.video?(f.audio?" · con audio":f.unknown_audio?" · audio por verificar":" · sin audio"):"";
+      const label=(index===0&&f.video&&f.audio?"★ Recomendado · ":"")+quality+" · "+(f.ext||"archivo")+sound;
       addAction(label,API+f.download);
     }
     setStatus("Análisis finalizado. Los enlaces pueden caducar o estar restringidos por el origen.");
