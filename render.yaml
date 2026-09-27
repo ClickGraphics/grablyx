@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: grablyx-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /health
+    envVars:
+      - key: ALLOWED_ORIGINS
+        value: https://clickgraphics.github.io
