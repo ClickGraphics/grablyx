@@ -27,6 +27,7 @@ async function analyze(url){
     if(!response.ok)throw Error(typeof data.detail==="string"?data.detail:"No se pudo analizar el enlace.");
     result.hidden=false;result.replaceChildren();
     const title=document.createElement("h2");title.textContent=data.title||"Contenido detectado";result.append(title);
+    if(data.combined){addAction("★ Descargar video con audio · MP4",API+data.combined);}
     const formats=(data.formats||[]).filter(f=>f.download&&f.download.startsWith("/download?token="));
     const unique=new Map();
     for(const f of formats){
