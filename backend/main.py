@@ -2,6 +2,7 @@
 import os
 import ipaddress
 import socket
+import re
 from urllib.parse import urlparse
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,7 +48,21 @@ def analyze(link: Link):
             "ignoreerrors": False, "quiet": True, "no_warnings": True}
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+            try:
+                info = ydl.extract_info(url, download=False)
+            except yt_dlp.utils.DownloadError as primary_error:
+                # Facebook has different URL routes for the same public Reel.
+                # Retry its canonical watch route only when the first extractor fails.
+                parsed = urlparse(url)
+                match = re.fullmatch(r"/reel/(\\d+)/?", parsed.path)
+                if parsed.hostname in ("facebook.com", "www.facebook.com", "m.facebook.com") and match:
+                    alternate = "https://www.facebook.com/watch/?v=" + match.group(1)
+                    try:
+                        info = ydl.extract_info(alternate, download=False)
+                    except yt_dlp.utils.DownloadError:
+                        raise primary_error
+                else:
+                    raise
         if not info:
             raise HTTPException(422, "No hay contenido multimedia accesible.")
         # Some extractors return one playable URL rather than a formats array.
