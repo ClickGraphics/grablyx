@@ -50,14 +50,24 @@ def analyze(link: Link):
             info = ydl.extract_info(url, download=False)
         if not info:
             raise HTTPException(422, "No hay contenido multimedia accesible.")
+        # Some extractors return one playable URL rather than a formats array.
+        candidates = info.get("formats") or ([info] if info.get("url") else [])
         formats = []
-        for f in info.get("formats", []):
+        seen = set()
+        for f in candidates:
             direct = f.get("url")
-            if not direct or f.get("has_drm") or f.get("protocol") not in ("http", "https"):
+            if not direct or f.get("has_drm") or f.get("protocol", "https") not in ("http", "https"):
                 continue
+            if urlparse(direct).scheme not in ("http", "https"):
+                continue
+            if direct in seen:
+                continue
+            seen.add(direct)
             formats.append({"id": f.get("format_id"), "ext": f.get("ext"),
-                            "height": f.get("height"), "audio": f.get("acodec") != "none",
-                            "video": f.get("vcodec") != "none", "url": direct})
+                            "height": f.get("height"),
+                            "audio": f.get("acodec") not in (None, "none"),
+                            "video": f.get("vcodec") not in (None, "none"),
+                            "url": direct})
         return {"title": info.get("title"), "thumbnail": info.get("thumbnail"),
                 "duration": info.get("duration"), "formats": formats[:80]}
     except HTTPException:
