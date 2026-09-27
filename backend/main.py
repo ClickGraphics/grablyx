@@ -60,15 +60,24 @@ def analyze(link: Link):
             try:
                 info = ydl.extract_info(url, download=False)
             except yt_dlp.utils.DownloadError as primary_error:
-                # Facebook has different URL routes for the same public Reel.
-                # Retry its canonical watch route only when the first extractor fails.
                 parsed = urlparse(url)
                 match = re.fullmatch(r"/reel/(\\d+)/?", parsed.path)
                 if parsed.hostname in ("facebook.com", "www.facebook.com", "m.facebook.com") and match:
-                    alternate = "https://www.facebook.com/watch/?v=" + match.group(1)
-                    try:
-                        info = ydl.extract_info(alternate, download=False)
-                    except yt_dlp.utils.DownloadError:
+                    reel_id = match.group(1)
+                    alternatives = (
+                        "https://www.facebook.com/watch/?v=" + reel_id,
+                        "https://m.facebook.com/watch/?v=" + reel_id,
+                        "https://www.facebook.com/video.php?v=" + reel_id,
+                    )
+                    info = None
+                    for alternate in alternatives:
+                        try:
+                            info = ydl.extract_info(alternate, download=False)
+                            if info:
+                                break
+                        except yt_dlp.utils.DownloadError:
+                            continue
+                    if not info:
                         raise primary_error
                 else:
                     raise
