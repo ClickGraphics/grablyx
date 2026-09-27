@@ -83,7 +83,12 @@ def analyze(link: Link):
                         except yt_dlp.utils.DownloadError:
                             continue
                     if not info:
-                        raise primary_error
+                        # Retry with a browser TLS fingerprint for public reels rejected by Facebook.
+                        try:
+                            with yt_dlp.YoutubeDL({**opts, "impersonate": "chrome"}) as browser_ydl:
+                                info = browser_ydl.extract_info(url, download=False)
+                        except (yt_dlp.utils.DownloadError, Exception):
+                            raise primary_error
                 else:
                     raise
         if not info:
