@@ -62,5 +62,14 @@ def analyze(link: Link):
                 "duration": info.get("duration"), "formats": formats[:80]}
     except HTTPException:
         raise
+    except yt_dlp.utils.DownloadError as exc:
+        reason = str(exc).lower()
+        if any(term in reason for term in ("login", "sign in", "cookies", "private")):
+            raise HTTPException(422, "El contenido requiere autenticación o no es público.")
+        if "unsupported url" in reason or "no video" in reason:
+            raise HTTPException(422, "Enlace no reconocido. En Facebook, prueba la URL directa del Reel público.")
+        if "429" in reason or "rate" in reason or "blocked" in reason:
+            raise HTTPException(503, "La plataforma limita temporalmente el acceso desde este servidor.")
+        raise HTTPException(422, "La plataforma no entregó contenido accesible. Prueba la URL directa del Reel.")
     except Exception:
-        raise HTTPException(422, "No se pudo analizar este enlace público.")
+        raise HTTPException(422, "Error al analizar este enlace público.")
