@@ -11,6 +11,7 @@ import time
 import secrets
 import subprocess
 import tempfile
+import logging
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 import httpx
@@ -236,6 +237,7 @@ async def merge(token: str):
             for i, source in enumerate(sources):
                 async with client.stream("GET", source) as response:
                     if response.status_code != 200 or response.headers.get("content-type", "").lower().startswith(("text/", "application/json")):
+                        logging.warning("merge upstream status=%s content_type=%s track=%s", response.status_code, response.headers.get("content-type", "")[:60], i)
                         raise HTTPException(502, "No se pudo obtener video o audio del origen.")
                     if int(response.headers.get("content-length", "0")) > 100_000_000:
                         raise HTTPException(413, "Archivo demasiado grande para combinar.")
@@ -248,11 +250,13 @@ async def merge(token: str):
                             output.write(chunk)
         proc = subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-i", os.path.join(folder, "0"), "-i", os.path.join(folder, "1"), "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-movflags", "+faststart", os.path.join(folder, "grablyx.mp4")], timeout=90, capture_output=True)
         if proc.returncode != 0:
+            logging.warning("ffmpeg mux failed: %s", proc.stderr.decode(errors="replace")[-900:])
             raise HTTPException(502, "No fue posible combinar las pistas de este video.")
         return FileResponse(os.path.join(folder, "grablyx.mp4"), media_type="video/mp4", filename="grablyx.mp4", background=BackgroundTask(shutil.rmtree, folder, ignore_errors=True))
     except HTTPException:
         shutil.rmtree(folder, ignore_errors=True)
         raise
-    except Exception:
+    except Exception as exc:
+        logging.exception("merge failure: %s", type(exc).__name__)
         shutil.rmtree(folder, ignore_errors=True)
         raise HTTPException(502, "Falló la combinación de video y audio.")
