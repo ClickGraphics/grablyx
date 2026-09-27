@@ -127,12 +127,19 @@ async def download(token: str):
         parsed = urlparse(source)
         if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.port not in (None, 443):
             raise ValueError("invalid source")
-        addresses = socket.getaddrinfo(parsed.hostname, 443, type=socket.SOCK_STREAM)
+        # The signed token must only point to recognized public media CDNs.
+        cdn_hosts = ("fbcdn.net", "cdninstagram.com", "googlevideo.com",
+                     "tiktokcdn.com", "tiktokv.com", "twimg.com", "redd.it",
+                     "redditmedia.com", "pinimg.com")
+        host = parsed.hostname.lower().rstrip(".")
+        if not any(host == d or host.endswith("." + d) for d in cdn_hosts):
+            raise ValueError("unrecognized media host")
+        addresses = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
         if not addresses or any(not ipaddress.ip_address(a[4][0]).is_global for a in addresses):
             raise ValueError("nonpublic source")
     except HTTPException:
         raise
-    except (ValueError, KeyError, json.JSONDecodeError, socket.gaierror):
+    except (ValueError, KeyError, TypeError, OverflowError, json.JSONDecodeError, socket.gaierror):
         raise HTTPException(400, "Enlace de descarga inválido.")
     client = httpx.AsyncClient(follow_redirects=False, timeout=httpx.Timeout(25, connect=8), trust_env=False)
     try:
@@ -142,6 +149,11 @@ async def download(token: str):
             await response.aclose()
             await client.aclose()
             raise HTTPException(502, "El archivo ya no está disponible. Vuelve a analizar el enlace.")
+        content_type = response.headers.get("content-type", "").lower()
+        if content_type.startswith(("text/html", "application/json", "text/xml")):
+            await response.aclose()
+            await client.aclose()
+            raise HTTPException(502, "El origen no entregó un archivo multimedia.")
         size = response.headers.get("content-length")
         if size and int(size) > 250_000_000:
             await response.aclose()
