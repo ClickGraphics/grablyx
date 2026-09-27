@@ -9,6 +9,10 @@ import base64
 import json
 import time
 import secrets
+import subprocess
+import tempfile
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 import httpx
 from urllib.parse import urlparse
 from fastapi import FastAPI, HTTPException
@@ -105,7 +109,15 @@ def analyze(link: Link):
                             "video": f.get("vcodec") not in (None, "none") or (f.get("vcodec") is None and f.get("ext") in ("mp4", "webm", "mov") and f.get("acodec") != "none"),
                             "unknown_audio": f.get("acodec") is None,
                             "url": direct})
-        return {"title": info.get("title"), "thumbnail": info.get("thumbnail"),
+        videos = [f for f in formats if f["video"] and not f["audio"] and f["ext"] == "mp4"]
+        audios = [f for f in formats if f["audio"] and not f["video"] and f["ext"] in ("m4a", "mp4")]
+        combined = None
+        if videos and audios:
+            best = max(videos, key=lambda f: f["height"] or 0)
+            payload = json.dumps({"v": best["url"], "a": audios[0]["url"], "e": int(time.time()) + 900}, separators=(",", ":")).encode()
+            sig = hmac.new(SIGNING_KEY, payload, hashlib.sha256).digest()
+            combined = "/merge?token=" + base64.urlsafe_b64encode(payload + sig).decode().rstrip("=")
+        return {"combined": combined, "title": info.get("title"), "thumbnail": info.get("thumbnail"),
                 "duration": info.get("duration"), "formats": formats[:80]}
     except HTTPException:
         raise
@@ -189,3 +201,58 @@ async def download(token: str):
     return StreamingResponse(chunks(), media_type="application/octet-stream",
         headers={"Content-Disposition": f'attachment; filename="grablyx.{ext}"',
                  "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+
+@app.get("/merge")
+async def merge(token: str):
+    """Mux publicly available separate video/audio streams into one downloadable MP4."""
+    try:
+        raw = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
+        payload, signature = raw[:-32], raw[-32:]
+        if not hmac.compare_digest(hmac.new(SIGNING_KEY, payload, hashlib.sha256).digest(), signature):
+            raise ValueError("signature")
+        data = json.loads(payload)
+        if data["e"] < time.time():
+            raise HTTPException(410, "Enlace caducado. Analiza nuevamente.")
+        sources = [data["v"], data["a"]]
+        for source in sources:
+            p = urlparse(source)
+            if p.scheme != "https" or not p.hostname or p.username or p.password or p.port not in (None, 443):
+                raise ValueError("source")
+            host = p.hostname.lower().rstrip(".")
+            if not any(host == d or host.endswith("." + d) for d in ("fbcdn.net", "cdninstagram.com", "googlevideo.com", "redd.it", "redditmedia.com", "twimg.com", "tiktokcdn.com", "tiktokv.com", "pinimg.com")):
+                raise ValueError("host")
+            addresses = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+            if not addresses or any(not ipaddress.ip_address(a[4][0]).is_global for a in addresses):
+                raise ValueError("address")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(400, "Enlace de combinación inválido.")
+    folder = tempfile.mkdtemp(prefix="grablyx-")
+    import shutil
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(45, connect=8), follow_redirects=False, trust_env=False) as client:
+            for i, source in enumerate(sources):
+                async with client.stream("GET", source) as response:
+                    if response.status_code != 200 or response.headers.get("content-type", "").lower().startswith(("text/", "application/json")):
+                        raise HTTPException(502, "No se pudo obtener video o audio del origen.")
+                    if int(response.headers.get("content-length", "0")) > 100_000_000:
+                        raise HTTPException(413, "Archivo demasiado grande para combinar.")
+                    size = 0
+                    with open(os.path.join(folder, str(i)), "wb") as output:
+                        async for chunk in response.aiter_bytes(65536):
+                            size += len(chunk)
+                            if size > 100_000_000:
+                                raise HTTPException(413, "Archivo demasiado grande para combinar.")
+                            output.write(chunk)
+        proc = subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-i", os.path.join(folder, "0"), "-i", os.path.join(folder, "1"), "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-movflags", "+faststart", os.path.join(folder, "grablyx.mp4")], timeout=90, capture_output=True)
+        if proc.returncode != 0:
+            raise HTTPException(502, "No fue posible combinar las pistas de este video.")
+        return FileResponse(os.path.join(folder, "grablyx.mp4"), media_type="video/mp4", filename="grablyx.mp4", background=BackgroundTask(shutil.rmtree, folder, ignore_errors=True))
+    except HTTPException:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
+    except Exception:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise HTTPException(502, "Falló la combinación de video y audio.")
