@@ -30,5 +30,7 @@ jobs:
           for url in ["http://facebook.com/reel/1", "https://localhost/reel/1", "https://example.com/a"]:
               assert client.post("/analyze", json={"url": url}).status_code == 400
           assert client.get("/download", params={"token": "invalid"}).status_code == 400
+          import re
+          assert re.fullmatch(r"/reel/(\\d+)/?", "/reel/1467483168533263")
           print("Backend smoke tests passed")
           PY
