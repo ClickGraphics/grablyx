@@ -66,8 +66,10 @@ def analyze(link: Link):
         reason = str(exc).lower()
         if any(term in reason for term in ("login", "sign in", "cookies", "private")):
             raise HTTPException(422, "El contenido requiere autenticación o no es público.")
-        if "cannot parse data" in reason:\n            raise HTTPException(422, "Facebook ha cambiado la respuesta de este Reel y el extractor actual no puede interpretarla. No es un problema de tu enlace.")\n        if "unsupported url" in reason or "no video" in reason:
-            raise HTTPException(422, "Enlace no reconocido. En Facebook, prueba la URL directa del Reel público.")
+        if "cannot parse data" in reason:
+            raise HTTPException(422, "El extractor no pudo interpretar la respuesta de Facebook. Puede ser una restricción o un cambio de formato.")
+        if "unsupported url" in reason or "no video" in reason:
+            raise HTTPException(422, "Enlace no reconocido. Prueba la URL directa de una publicación pública.")
         if "429" in reason or "rate" in reason or "blocked" in reason:
             raise HTTPException(503, "La plataforma limita temporalmente el acceso desde este servidor.")
         raise HTTPException(422, "La plataforma no entregó contenido accesible. Prueba la URL directa del Reel.")
