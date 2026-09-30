@@ -12,15 +12,18 @@ import secrets
 import subprocess
 import tempfile
 import logging
+import html
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 import httpx
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import yt_dlp
+from yt_dlp.version import __version__ as YTDLP_VERSION
+from curl_cffi import requests as curl_requests
 
 logger = logging.getLogger("grablyx")
 app = FastAPI(title="GRABLYX API")
@@ -51,9 +54,102 @@ def validate(raw: str):
         raise HTTPException(400, "Dominio no encontrado.")
     return raw
 
+def _is_public_facebook_media_url(value: str) -> bool:
+    try:
+        p = urlparse(value)
+        host = (p.hostname or "").lower().rstrip(".")
+        return p.scheme == "https" and (host == "fbcdn.net" or host.endswith(".fbcdn.net"))
+    except Exception:
+        return False
+
+def _decode_facebook_value(value: str) -> str:
+    value = html.unescape(value)
+    try:
+        value = json.loads('"' + value.replace('"', '\\"') + '"')
+    except Exception:
+        value = (value.replace("\\/", "/")
+                      .replace("\\u0025", "%")
+                      .replace("\\u0026", "&")
+                      .replace("\\u003d", "="))
+    return html.unescape(value)
+
+def _extract_public_facebook_html(url: str, reel_id: str):
+    """Best-effort public-page fallback. No cookies, login, private APIs or DRM bypass."""
+    pages = (
+        url,
+        "https://www.facebook.com/watch/?v=" + reel_id,
+        "https://m.facebook.com/watch/?v=" + reel_id + "&_rdr",
+        "https://www.facebook.com/video.php?v=" + reel_id,
+        "https://www.facebook.com/plugins/video.php?href=" + quote(url, safe=""),
+    )
+    patterns = (
+        r'<meta[^>]+(?:property|name)=["\']og:video(?::url|:secure_url)?["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']og:video(?::url|:secure_url)?["\']',
+        r'"(?:browser_native_hd_url|browser_native_sd_url|playable_url|playable_url_quality_hd|video_url)"\s*:\s*"((?:\\.|[^"\\])*)"',
+    )
+    title_patterns = (
+        r'<meta[^>]+(?:property|name)=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']og:title["\']',
+    )
+    for page in pages:
+        for browser in ("chrome", "safari"):
+            try:
+                response = curl_requests.get(
+                    page,
+                    impersonate=browser,
+                    timeout=12,
+                    allow_redirects=True,
+                    headers={"Accept-Language": "en-US,en;q=0.9"},
+                )
+                body = response.text[:5_000_000]
+                logger.info(
+                    "facebook html reel=%s browser=%s status=%s bytes=%s final_host=%s markers=%s",
+                    reel_id, browser, response.status_code, len(response.content),
+                    (urlparse(response.url).hostname or "")[:80],
+                    sum(body.lower().count(k) for k in ("og:video", "playable_url", "browser_native_", "fbcdn.net")),
+                )
+                if response.status_code != 200:
+                    continue
+                found = []
+                for pattern in patterns:
+                    for raw_value in re.findall(pattern, body, flags=re.I):
+                        value = _decode_facebook_value(raw_value)
+                        if _is_public_facebook_media_url(value) and value not in found:
+                            found.append(value)
+                if not found:
+                    continue
+                title = None
+                for pattern in title_patterns:
+                    match = re.search(pattern, body, flags=re.I)
+                    if match:
+                        title = html.unescape(match.group(1)).strip()[:300]
+                        break
+                formats = []
+                for index, direct in enumerate(found[:8]):
+                    formats.append({
+                        "url": direct,
+                        "format_id": "facebook-public-" + str(index + 1),
+                        "ext": "mp4",
+                        "protocol": "https",
+                        "vcodec": "unknown",
+                        "acodec": "unknown",
+                    })
+                logger.info("facebook html reel=%s recovered=%s public media urls", reel_id, len(formats))
+                return {"id": reel_id, "title": title or "Facebook Reel", "formats": formats}
+            except Exception as exc:
+                logger.warning(
+                    "facebook html reel=%s browser=%s failed type=%s detail=%r",
+                    reel_id, browser, type(exc).__name__, exc,
+                )
+    return None
+
 @app.get("/health")
 def health():
-    return {"ok": True}
+    return {
+        "ok": True,
+        "revision": os.getenv("RENDER_GIT_COMMIT", ""),
+        "yt_dlp": YTDLP_VERSION,
+    }
 
 @app.post("/analyze")
 def analyze(link: Link):
@@ -98,10 +194,12 @@ def analyze(link: Link):
                                 "facebook reel %s fallback=%s failed: %s",
                                 reel_id,
                                 impersonation or "default",
-                                str(exc).replace("\n", " ")[:220],
+                                (str(exc).replace("\n", " ")[:180] or (type(exc).__name__ + " " + repr(exc)[:160])),
                             )
                     if info:
                         break
+                if not info:
+                    info = _extract_public_facebook_html(url, reel_id)
                 if not info:
                     raise primary_error
             else:
