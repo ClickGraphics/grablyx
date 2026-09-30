@@ -1,0 +1,68 @@
+name: Production Smoke Test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "app.js"
+      - "index.html"
+      - ".github/workflows/production-smoke.yml"
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Verify GRABLYX production API and Facebook Reel
+        env:
+          API: https://grablyx-api.onrender.com
+          FACEBOOK_REEL: https://www.facebook.com/reel/1467483168533263
+        run: |
+          python - <<'PY'
+          import json, os, sys, time, urllib.request, urllib.error
+
+          api = os.environ["API"]
+          reel = os.environ["FACEBOOK_REEL"]
+
+          def request(req, timeout=30):
+              with urllib.request.urlopen(req, timeout=timeout) as r:
+                  return r.status, r.read().decode("utf-8", "replace")
+
+          last = None
+          for _ in range(18):
+              try:
+                  status, body = request(urllib.request.Request(api + "/health"), timeout=15)
+                  if status == 200:
+                      break
+              except Exception as exc:
+                  last = exc
+              time.sleep(5)
+          else:
+              raise SystemExit(f"health failed: {last}")
+
+          payload = json.dumps({"url": reel}).encode()
+          req = urllib.request.Request(
+              api + "/analyze",
+              data=payload,
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+          try:
+              status, body = request(req, timeout=45)
+          except urllib.error.HTTPError as exc:
+              body = exc.read().decode("utf-8", "replace")
+              raise SystemExit(f"analyze HTTP {exc.code}: {body}")
+          data = json.loads(body)
+          formats = data.get("formats") or []
+          downloadable = [f for f in formats if isinstance(f, dict) and f.get("download")]
+          if status != 200 or not (data.get("combined") or downloadable):
+              raise SystemExit("analyze returned no downloadable media: " + body[:1000])
+          print(json.dumps({
+              "ok": True,
+              "title": data.get("title"),
+              "combined": bool(data.get("combined")),
+              "downloadable_formats": len(downloadable),
+          }, ensure_ascii=False))
+          PY
