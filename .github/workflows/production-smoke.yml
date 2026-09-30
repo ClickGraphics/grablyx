@@ -73,6 +73,29 @@ jobs:
               "combined": bool(data.get("combined")),
               "downloadable_formats": len(downloadable),
           }, ensure_ascii=False))
+
+          # End-to-end: open an actual GRABLYX download, verify attachment headers
+          # and read enough bytes to prove the upstream media stream is real.
+          path = data.get("combined") or downloadable[0]["download"]
+          download_req = urllib.request.Request(api + path)
+          with urllib.request.urlopen(download_req, timeout=90) as response:
+              disposition = response.headers.get("content-disposition", "")
+              content_type = response.headers.get("content-type", "").lower()
+              sample = response.read(131072)
+              if response.status != 200:
+                  raise SystemExit(f"download HTTP {response.status}")
+              if "attachment" not in disposition.lower():
+                  raise SystemExit("download is not an attachment: " + disposition)
+              if content_type.startswith(("text/", "application/json")):
+                  raise SystemExit("download returned non-media content: " + content_type)
+              if len(sample) < 1024 or sample.lstrip().startswith((b"<html", b"<!doctype")):
+                  raise SystemExit("download returned an invalid/empty media stream")
+              print(json.dumps({
+                  "download_ok": True,
+                  "content_type": content_type,
+                  "sample_bytes": len(sample),
+                  "attachment": disposition[:120],
+              }, ensure_ascii=False))
           PY
 
 
