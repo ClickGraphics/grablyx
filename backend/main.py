@@ -22,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import yt_dlp
 
+logger = logging.getLogger("grablyx")
 app = FastAPI(title="GRABLYX API")
 SIGNING_KEY = os.getenv("DOWNLOAD_SIGNING_KEY", "").encode() or secrets.token_bytes(32)
 allowed = [x.strip() for x in os.getenv("ALLOWED_ORIGINS", "https://clickgraphics.github.io").split(",") if x.strip()]
@@ -61,36 +62,50 @@ def analyze(link: Link):
             "socket_timeout": 8, "retries": 0, "playlistend": 1,
             "ignoreerrors": False, "quiet": True, "no_warnings": True}
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            try:
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
-            except yt_dlp.utils.DownloadError as primary_error:
-                parsed = urlparse(url)
-                match = re.fullmatch(r"/reel/(\d+)/?", parsed.path)
-                if parsed.hostname in ("facebook.com", "www.facebook.com", "m.facebook.com") and match:
-                    reel_id = match.group(1)
-                    alternatives = (
-                        "https://www.facebook.com/watch/?v=" + reel_id,
-                        "https://m.facebook.com/watch/?v=" + reel_id,
-                        "https://www.facebook.com/video.php?v=" + reel_id,
-                    )
-                    info = None
-                    for alternate in alternatives:
-                        try:
-                            info = ydl.extract_info(alternate, download=False)
-                            if info:
-                                break
-                        except yt_dlp.utils.DownloadError:
+        except yt_dlp.utils.DownloadError as primary_error:
+            parsed = urlparse(url)
+            host = (parsed.hostname or "").lower()
+            match = re.fullmatch(r"/reel/(\d+)/?", parsed.path)
+            if host in ("facebook.com", "www.facebook.com", "m.facebook.com") and match:
+                reel_id = match.group(1)
+                candidates = (
+                    "https://www.facebook.com/reel/" + reel_id,
+                    "https://www.facebook.com/watch/?v=" + reel_id,
+                    "https://m.facebook.com/watch/?v=" + reel_id + "&_rdr",
+                    "https://www.facebook.com/video.php?v=" + reel_id,
+                )
+                attempts = (
+                    (None, opts),
+                    ("chrome-99", {**opts, "impersonate": "chrome-99"}),
+                    ("chrome", {**opts, "impersonate": "chrome"}),
+                )
+                info = None
+                for impersonation, attempt_opts in attempts:
+                    for candidate in candidates:
+                        if impersonation is None and candidate == url:
                             continue
-                    if not info:
-                        # Retry with a browser TLS fingerprint for public reels rejected by Facebook.
                         try:
-                            with yt_dlp.YoutubeDL({**opts, "impersonate": "chrome"}) as browser_ydl:
-                                info = browser_ydl.extract_info(url, download=False)
-                        except (yt_dlp.utils.DownloadError, Exception):
-                            raise primary_error
-                else:
-                    raise
+                            with yt_dlp.YoutubeDL(attempt_opts) as fallback_ydl:
+                                info = fallback_ydl.extract_info(candidate, download=False)
+                            if info:
+                                logger.info("facebook reel %s extracted via %s", reel_id, impersonation or "default")
+                                break
+                        except Exception as exc:
+                            logger.warning(
+                                "facebook reel %s fallback=%s failed: %s",
+                                reel_id,
+                                impersonation or "default",
+                                str(exc).replace("\n", " ")[:220],
+                            )
+                    if info:
+                        break
+                if not info:
+                    raise primary_error
+            else:
+                raise
         if not info:
             raise HTTPException(422, "No hay contenido multimedia accesible.")
         # Some extractors return one playable URL rather than a formats array.
