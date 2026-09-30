@@ -8,6 +8,7 @@ on:
       - "app.js"
       - "index.html"
       - ".github/workflows/production-smoke.yml"
+      - ".github/workflows/backend-checks.yml"
   workflow_dispatch:
 
 jobs:
