@@ -18,7 +18,9 @@ jobs:
       - name: Check Python syntax
         run: python -m compileall -q backend
       - name: Install backend dependencies
-        run: pip install -r backend/requirements.txt
+        run: |
+          pip install -r backend/requirements.txt
+          pip install -U --pre "yt-dlp[default,curl-cffi]"
       - name: Import application and check health
         run: |
           cd backend
@@ -26,7 +28,9 @@ jobs:
           from fastapi.testclient import TestClient
           from main import app
           client = TestClient(app)
-          assert client.get("/health").json() == {"ok": True}
+          health = client.get("/health").json()
+          assert health.get("ok") is True
+          assert health.get("yt_dlp")
           for url in ["http://facebook.com/reel/1", "https://localhost/reel/1", "https://example.com/a"]:
               assert client.post("/analyze", json={"url": url}).status_code == 400
           assert client.get("/download", params={"token": "invalid"}).status_code == 400
