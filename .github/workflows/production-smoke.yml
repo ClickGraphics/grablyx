@@ -19,6 +19,7 @@ jobs:
         env:
           API: https://grablyx-api.onrender.com
           FACEBOOK_REEL: https://www.facebook.com/reel/1467483168533263
+          EXPECTED_SHA: ${{ github.sha }}
         run: |
           python - <<'PY'
           import json, os, sys, time, urllib.request, urllib.error
@@ -31,16 +32,22 @@ jobs:
                   return r.status, r.read().decode("utf-8", "replace")
 
           last = None
-          for _ in range(18):
+          expected = os.environ["EXPECTED_SHA"]
+          for _ in range(36):
               try:
                   status, body = request(urllib.request.Request(api + "/health"), timeout=15)
-                  if status == 200:
+                  health = json.loads(body)
+                  revision = health.get("revision", "")
+                  if status == 200 and revision == expected:
+                      print("production revision", revision)
+                      print("yt_dlp", health.get("yt_dlp"))
                       break
+                  last = f"waiting for {expected}, production has {revision}"
               except Exception as exc:
                   last = exc
               time.sleep(5)
           else:
-              raise SystemExit(f"health failed: {last}")
+              raise SystemExit(f"production revision not ready: {last}")
 
           payload = json.dumps({"url": reel}).encode()
           req = urllib.request.Request(
