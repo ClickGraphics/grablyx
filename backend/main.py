@@ -24,6 +24,7 @@ from pydantic import BaseModel
 import yt_dlp
 from yt_dlp.version import __version__ as YTDLP_VERSION
 from curl_cffi import requests as curl_requests
+from yt_dlp.networking.impersonate import ImpersonateTarget
 
 logger = logging.getLogger("grablyx")
 app = FastAPI(title="GRABLYX API")
@@ -102,7 +103,7 @@ def _extract_public_facebook_html(url: str, reel_id: str):
                     headers={"Accept-Language": "en-US,en;q=0.9"},
                 )
                 body = response.text[:5_000_000]
-                logger.info(
+                logger.warning(
                     "facebook html reel=%s browser=%s status=%s bytes=%s final_host=%s markers=%s",
                     reel_id, browser, response.status_code, len(response.content),
                     (urlparse(response.url).hostname or "")[:80],
@@ -175,8 +176,8 @@ def analyze(link: Link):
                 )
                 attempts = (
                     (None, opts),
-                    ("chrome-99", {**opts, "impersonate": "chrome-99"}),
-                    ("chrome", {**opts, "impersonate": "chrome"}),
+                    ("chrome-99", {**opts, "impersonate": ImpersonateTarget.from_str("chrome-99")}),
+                    ("chrome", {**opts, "impersonate": ImpersonateTarget.from_str("chrome")}),
                 )
                 info = None
                 for impersonation, attempt_opts in attempts:
