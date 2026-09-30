@@ -16,7 +16,7 @@ import html
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 import httpx
-from urllib.parse import urlparse, quote
+from urllib.parse import urlparse, quote, unquote
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -65,14 +65,23 @@ def _is_public_facebook_media_url(value: str) -> bool:
 
 def _decode_facebook_value(value: str) -> str:
     value = html.unescape(value)
-    try:
-        value = json.loads('"' + value.replace('"', '\\"') + '"')
-    except Exception:
-        value = (value.replace("\\/", "/")
-                      .replace("\\u0025", "%")
-                      .replace("\\u0026", "&")
-                      .replace("\\u003d", "="))
-    return html.unescape(value)
+    # Facebook may nest JSON-escaped URLs inside another serialized JSON string.
+    for _ in range(3):
+        before = value
+        try:
+            value = json.loads('"' + value.replace('"', '\\"') + '"')
+        except Exception:
+            value = (value.replace("\\/", "/")
+                          .replace("\\u0025", "%")
+                          .replace("\\u0026", "&")
+                          .replace("\\u003d", "=")
+                          .replace("\\u002F", "/"))
+        if value == before:
+            break
+    value = html.unescape(value).replace("\\/", "/")
+    if value.lower().startswith("https%3a"):
+        value = unquote(value)
+    return value
 
 def _extract_public_facebook_html(url: str, reel_id: str):
     """Best-effort public-page fallback. No cookies, login, private APIs or DRM bypass."""
@@ -112,11 +121,22 @@ def _extract_public_facebook_html(url: str, reel_id: str):
                 if response.status_code != 200:
                     continue
                 found = []
+                raw_values = []
                 for pattern in patterns:
-                    for raw_value in re.findall(pattern, body, flags=re.I):
-                        value = _decode_facebook_value(raw_value)
-                        if _is_public_facebook_media_url(value) and value not in found:
-                            found.append(value)
+                    raw_values.extend(re.findall(pattern, body, flags=re.I))
+                # Also recover media URLs from Facebook's nested/escaped script payloads.
+                raw_values.extend(re.findall(
+                    r'https(?::|%3A)[^"\'< >\r\n\t]{20,4000}',
+                    body,
+                    flags=re.I,
+                ))
+                for raw_value in raw_values:
+                    raw_value = raw_value.split("&quot;", 1)[0].split("&amp;quot;", 1)[0]
+                    value = _decode_facebook_value(raw_value)
+                    # Trim common serialized delimiters left after nested JSON escaping.
+                    value = re.split(r'(?:\\\\?["\']|&(?:amp;)?quot;)', value, maxsplit=1)[0]
+                    if _is_public_facebook_media_url(value) and value not in found:
+                        found.append(value)
                 if not found:
                     continue
                 title = None
